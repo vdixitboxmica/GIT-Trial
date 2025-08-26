@@ -1,14 +1,15 @@
 {
-  "name": "Car Detection Dev",
-  "image": "mcr.microsoft.com/devcontainers/python:1-3.11-bookworm",
+  "name": "Car Detection (Alpine)",
+  "features": {
+    "ghcr.io/devcontainers/features/python:1": { "version": "3.11" }
+  },
+  "postCreateCommand": "sh -c 'apk add --no-cache git-lfs && git lfs install && python -m venv .venv && .venv/bin/pip install --upgrade pip setuptools wheel && [ -f requirements.txt ] && .venv/bin/pip install -r requirements.txt || true'",
   "customizations": {
     "vscode": {
       "extensions": [
         "ms-python.python",
-        "ms-toolsai.jupyter",
         "ms-python.vscode-pylance",
-        "ms-azuretools.vscode-docker",
-        "github.vscode-github-actions"
+        "ms-toolsai.jupyter"
       ],
       "settings": {
         "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
@@ -17,8 +18,5 @@
     }
   },
   "forwardPorts": [8000, 8080],
-  "mounts": ["type=cache,target=/home/vscode/.cache/pip"],
-  "runArgs": ["--shm-size=2g"],
-  "postCreateCommand": "bash -lc '.devcontainer/setup.sh'",
   "remoteUser": "vscode"
 }
