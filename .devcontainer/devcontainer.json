@@ -1,22 +1,14 @@
 {
-  "name": "Car Detection (Alpine)",
-  "features": {
-    "ghcr.io/devcontainers/features/python:1": { "version": "3.11" }
-  },
-  "postCreateCommand": "sh -c 'apk add --no-cache git-lfs && git lfs install && python -m venv .venv && .venv/bin/pip install --upgrade pip setuptools wheel && [ -f requirements.txt ] && .venv/bin/pip install -r requirements.txt || true'",
+  "name": "Car Detection (Ubuntu Minimal)",
+  "image": "mcr.microsoft.com/devcontainers/python:3.11",
+  "postCreateCommand": "/bin/bash -lc 'python -m venv .venv && .venv/bin/pip install --upgrade pip setuptools wheel && if [ -f requirements.txt ]; then .venv/bin/pip install -r requirements.txt; fi'",
   "customizations": {
     "vscode": {
-      "extensions": [
-        "ms-python.python",
-        "ms-python.vscode-pylance",
-        "ms-toolsai.jupyter"
-      ],
+      "extensions": ["ms-python.python","ms-python.vscode-pylance","ms-toolsai.jupyter"],
       "settings": {
         "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
         "python.terminal.activateEnvironment": true
       }
     }
-  },
-  "forwardPorts": [8000, 8080],
-  "remoteUser": "vscode"
+  }
 }
