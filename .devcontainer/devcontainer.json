@@ -1,7 +1,17 @@
 {
-  "name": "Car Detection (Ubuntu Minimal)",
+  "name": "Car Detection (Ubuntu)",
   "image": "mcr.microsoft.com/devcontainers/python:3.11",
-  "postCreateCommand": "/bin/bash -lc 'python -m venv .venv && .venv/bin/pip install --upgrade pip setuptools wheel && if [ -f requirements.txt ]; then .venv/bin/pip install -r requirements.txt; fi'",
+
+  "features": {
+    "ghcr.io/devcontainers/features/git-lfs:1": {},
+    "ghcr.io/devcontainers/features/apt-packages:1": {
+      "packages": "build-essential pkg-config libgl1 libglib2.0-0 ffmpeg"
+    }
+  },
+
+  "postCreateCommand": "/bin/bash -lc 'chmod +x .devcontainer/postCreate.sh .devcontainer/postStart.sh && .devcontainer/postCreate.sh'",
+  "postStartCommand": "/bin/bash -lc '.devcontainer/postStart.sh'",
+
   "customizations": {
     "vscode": {
       "extensions": ["ms-python.python","ms-python.vscode-pylance","ms-toolsai.jupyter"],
@@ -10,5 +20,7 @@
         "python.terminal.activateEnvironment": true
       }
     }
-  }
+  },
+
+  "forwardPorts": [8000, 8080]
 }
