@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tile → Enhance → Detect Pipeline</title>
+  <style>
+    :root{
+      --bg:#0b0f14; --panel:#111821; --muted:#7b8794; --text:#e8edf2; --accent:#5eead4; --accent-2:#60a5fa; --warn:#f59e0b; --danger:#ef4444;
+      --br:16px; --pad:16px; --gap:16px; --shadow:0 8px 30px rgba(0,0,0,.35);
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{margin:0;background:linear-gradient(180deg,#0b0f14,#0e131a 35%,#0b0f14);color:var(--text);font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
+    .container{max-width:1200px;margin:0 auto;padding:24px}
+    h1{font-weight:800;letter-spacing:.3px;font-size:28px;margin:0 0 6px}
+    .subtitle{color:var(--muted);font-size:14px;margin-bottom:24px}
+    .grid{display:grid;grid-template-columns:1.2fr .8fr;gap:var(--gap)}
+    @media (max-width:980px){.grid{grid-template-columns:1fr}}
+    .card{background:var(--panel);border-radius:var(--br);padding:var(--pad);box-shadow:var(--shadow);border:1px solid rgba(255,255,255,.06)}
+    .row{display:flex;gap:var(--gap);align-items:center;flex-wrap:wrap}
+    .spacer{height:12px}
+    label.small{color:var(--muted);font-size:12px}
+    input[type="text"], input[type="number"], select{background:#0c121a;border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:10px 12px;color:var(--text);outline:none;width:100%}
+    input[type="file"]{display:none}
+    .file-chooser{display:inline-flex;align-items:center;gap:10px;padding:12px 14px;border-radius:12px;background:#0c121a;border:1px dashed rgba(255,255,255,.15);cursor:pointer;color:#cfe6ff}
+    .btn{display:inline-flex;align-items:center;gap:10px;padding:12px 16px;border:none;border-radius:12px;cursor:pointer;font-weight:700;letter-spacing:.2px}
+    .btn[disabled]{opacity:.4;cursor:not-allowed}
+    .btn-primary{background:linear-gradient(135deg,var(--accent-2),#7c3aed);color:white}
+    .btn-ghost{background:transparent;border:1px solid rgba(255,255,255,.12);color:var(--text)}
+    .btn-danger{background:linear-gradient(135deg,#ef4444,#b91c1c);color:white}
+    .pill{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;background:#0c121a;border:1px solid rgba(255,255,255,.08);font-size:12px;color:#cde7ff}
+    .progress{height:12px;background:#0c121a;border-radius:999px;overflow:hidden;border:1px solid rgba(255,255,255,.08)}
+    .progress > span{display:block;height:100%;width:0%;background:linear-gradient(90deg,var(--accent),#34d399);transition:width .2s ease}
+    .list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+    @media (max-width:640px){.list{grid-template-columns:1fr}}
+    .class-item{display:flex;gap:10px;align-items:center;padding:10px;border-radius:12px;background:#0c121a;border:1px solid rgba(255,255,255,.06)}
+    .kbd{background:#0d1520;border:1px solid rgba(255,255,255,.08);padding:2px 6px;border-radius:6px;color:#c7d2fe;font-size:12px}
+    .hr{height:1px;background:rgba(255,255,255,.06);margin:12px 0}
+    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;font-size:12px;color:#b3c0cc}
+    .right{display:grid;gap:16px}
+    .preview-wrap{display:grid;grid-template-columns:1fr;gap:10px}
+    .preview{width:100%;border-radius:12px;border:1px solid rgba(255,255,255,.08);background:#0c121a;min-height:200px;display:grid;place-items:center;overflow:hidden}
+    .preview img{max-width:100%;height:auto;display:block}
+    .downloads a[aria-disabled="true"] { pointer-events:none; opacity:.5; }
+    .downloads{display:flex;gap:10px;flex-wrap:wrap}
+    .tag{font-size:12px;color:var(--muted)}
+    .ok{color:#5eead4}
+    .warn{color:#f59e0b}
+  </style>
+  <!--
+    API CONTRACT (expected backend endpoints):
+    - POST   /api/upload/init           { filename, size } -> { fileId, chunkSize? }
+    - POST   /api/upload/chunk          headers: { "x-file-id", "x-chunk-index", "x-chunk-total" } body: <binary>
+    - POST   /api/upload/complete       { fileId } -> { ok:true }
+    - GET    /api/model/info            -> { model:"epoch40.pt", classes:["small-vehicle","large-vehicle","ship", ...] }
+    - POST   /api/process/start         { fileId, classes:[...], params:{ tile_size, overlap, conf, max_det } } -> { ok:true }
+    - GET    /api/process/progress?fileId=... -> {
+            stage:"tiling|enhancing|detecting|finalizing|done|error",
+            message, totalTiles, processedTiles, percent, lastTilePng?:"/api/preview/tile.png"
+          }
+    - GET    /api/download/geojson?fileId=...     (Content-Disposition: attachment)
+    - GET    /api/download/overlay.png?fileId=... (Content-Disposition: attachment)
+    - GET    /api/preview/overlay.png?fileId=...  (for inline preview)
+  -->
+</head>
+<body>
+  <div class="container">
+    <h1>Satellite Detection Pipeline</h1>
+    <div class="subtitle">Upload imagery in <span class="kbd">chunks</span> → choose classes → <span class="kbd">tile</span> → <span class="kbd">enhance</span> → <span class="kbd">detect</span> → get <span class="kbd">JSON/Geojson</span> + overlay PNG.</div>
+
+    <div class="grid">
+      <!-- LEFT: Controls -->
+      <div class="card">
+        <div class="row">
+          <label class="file-chooser" for="fileInput" id="fileLabel">📤 Select Image</label>
+          <input id="fileInput" type="file" accept=".tif,.tiff,.png,.jpg,.jpeg"/>
+          <button class="btn btn-ghost" id="recheckBtn" disabled>🔎 Read Model & Classes</button>
+        </div>
+        <div class="spacer"></div>
+        <div class="row">
+          <span class="pill" id="fileMeta">No file selected</span>
+          <span class="pill" id="uploadMeta">Ready</span>
+          <span class="pill" id="modelMeta">Model: —</span>
+        </div>
+
+        <div class="hr"></div>
+
+        <div class="row">
+          <div style="flex:1">
+            <label class="small">Chunk size (MB)</label>
+            <input type="number" id="chunkSizeMB" min="1" value="5" />
+          </div>
+          <div>
+            <label class="small">Tile size</label>
+            <input type="number" id="tileSize" min="256" step="256" value="1024" />
+          </div>
+          <div>
+            <label class="small">Overlap</label>
+            <input type="number" id="overlap" min="0" step="16" value="256" />
+          </div>
+          <div>
+            <label class="small">Conf</label>
+            <input type="number" id="conf" min="0" max="1" step="0.01" value="0.05" />
+          </div>
+          <div>
+            <label class="small">Max det</label>
+            <input type="number" id="maxDet" min="50" step="50" value="600" />
+          </div>
+          <div>
+            <label class="small">IoU</label>
+            <input type="number" id="iou" min="0" max="1" step="0.01" value="0.25" />
+          </div>
+
+        </div>
+
+        <div class="spacer"></div>
+
+        <div>
+          <div class="row" style="justify-content:space-between">
+            <div>
+              <div class="tag">Available classes</div>
+            </div>
+            <div class="row">
+              <button class="btn btn-ghost" id="selectAllBtn" disabled>Select all</button>
+              <button class="btn btn-ghost" id="clearAllBtn" disabled>Clear</button>
+            </div>
+          </div>
+          <div class="spacer"></div>
+          <div class="list" id="classList">
+            <!-- populated dynamically -->
+          </div>
+        </div>
+
+        <div class="spacer"></div>
+        <div class="progress" title="Overall progress">
+          <span id="progressBar"></span>
+        </div>
+        <div class="row" style="justify-content:space-between;margin-top:6px">
+          <div class="tag" id="stageText">Stage: —</div>
+          <div class="tag" id="tileCounter">Tiles: —</div>
+        </div>
+
+        <div class="spacer"></div>
+        <div class="row">
+          <button class="btn btn-primary" id="uploadBtn" disabled>Upload in Chunks</button>
+          <button class="btn btn-primary" id="startBtn" disabled>Start Processing</button>
+          <button class="btn btn-danger" id="cancelBtn" disabled>Cancel</button>
+        </div>
+      </div>
+
+            <!-- RIGHT: Preview (and separate Metadata) and Downloads -->
+      <div class="right">
+        <!-- NEW: metadata card (hidden until we fetch it) -->
+        <div class="card" id="metaCard" style="display:none">
+          <div class="tag">Input metadata</div>
+          <pre id="meta" style="background:#111;color:#ddd;padding:8px;border-radius:6px;max-height:240px;overflow:auto;margin:8px 0 0"></pre>
+        </div>
+
+        <!-- Preview card (no <pre> here anymore) -->
+        <div class="card preview-wrap">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <div>
+              <div class="tag">Live overlay preview</div>
+              <div class="mono" id="statusLine">Waiting for upload…</div>
+            </div>
+            <div class="row">
+              <span class="pill">Last tile preview</span>
+            </div>
+          </div>
+          <div class="preview" id="previewBox">
+            <span class="tag">No preview yet</span>
+          </div>
+        </div>
+
+      <div class="card">
+        <div class="row" style="justify-content:space-between;align-items:center">
+          <div>
+            <div class="tag">Downloads</div>
+            <div class="mono">Aggregated outputs for the entire image</div>
+          </div>
+          <div class="downloads">
+            <a class="btn btn-ghost" id="dlGeoJSON" style="display:none" aria-disabled="true" download>⬇️ GeoJSON</a>
+            <a class="btn btn-ghost" id="dlOverlay"  aria-disabled="true" download>⬇️ Overlay PNG</a>
+            <button class="btn btn-ghost" id="btnClearCurrent" style="display:none">✅ Complete & Clear This Job</button>
+            <button class="btn btn-danger" id="btnClearAll" style="display:none">🧨 Clear All History</button>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    // ------- Helpers -------
+    const $ = sel => document.querySelector(sel);
+    const fileInput = $('#fileInput');
+    const fileLabel = $('#fileLabel');
+    const fileMeta = $('#fileMeta');
+    const uploadMeta = $('#uploadMeta');
+    const modelMeta = $('#modelMeta');
+    const chunkSizeMB = $('#chunkSizeMB');
+    const tileSize = $('#tileSize');
+    const overlap = $('#overlap');
+    const conf = $('#conf');
+    const maxDet = $('#maxDet');
+    const iou = $('#iou');
+    const classList = $('#classList');
+    const selectAllBtn = $('#selectAllBtn');
+    const clearAllBtn = $('#clearAllBtn');
+    const progressBar = $('#progressBar');
+    const stageText = $('#stageText');
+    const tileCounter = $('#tileCounter');
+    const uploadBtn = $('#uploadBtn');
+    const recheckBtn = $('#recheckBtn');
+    const startBtn = $('#startBtn');
+    const cancelBtn = $('#cancelBtn');
+    const previewBox = $('#previewBox');
+    const statusLine = $('#statusLine');
+    const dlGeoJSON = $('#dlGeoJSON');
+    const dlOverlay = $('#dlOverlay');
+    const completeBtn = $('#completeBtn');
+    const metaCard = document.querySelector('#metaCard');
+    const btnClearCurrent = document.getElementById('btnClearCurrent');
+    const btnClearAll     = document.getElementById('btnClearAll');
+
+    function disableDownloadsUI() {
+      // hide & disable
+      dlOverlay.href = '#';
+      dlOverlay.setAttribute('aria-disabled', 'true');
+
+      dlGeoJSON.href = '#';
+      dlGeoJSON.setAttribute('aria-disabled', 'true');
+      dlGeoJSON.style.display = 'none';
+    }
+
+    function resetUIAfterClear(msg='Cleared.') {
+      if (polling) { clearInterval(polling); polling = null; }
+      fileId = null;
+      setProgress(0);
+      stageText.textContent = 'Stage: —';
+      tileCounter.textContent = 'Tiles: —';
+      statusLine.textContent = msg;
+      previewBox.innerHTML = '<span class="tag">No preview yet</span>';
+      document.getElementById('meta').textContent = '';
+
+      // disable buttons post-clear
+      btnClearCurrent.style.display = 'none';
+      btnClearAll.style.display = 'none';
+
+      // unlock UI for a fresh run
+      uploadBtn.disabled = false;
+      startBtn.disabled = true;
+      cancelBtn.disabled = true;
+
+      disableDownloadsUI();
+    }
+
+    let currentFile = null;
+    let fileId = null;
+    let polling = null;
+    let cancelRequested = false;
+
+    function fmtBytes(bytes){
+      if(bytes===0) return '0 B';
+      const k=1024; const sizes=['B','KB','MB','GB','TB'];
+      const i=Math.floor(Math.log(bytes)/Math.log(k));
+      return parseFloat((bytes/Math.pow(k,i)).toFixed(2))+' '+sizes[i];
+    }
+
+    function setProgress(p){
+      progressBar.style.width = Math.max(0, Math.min(100, p)) + '%';
+    }
+
+    function setPreview(src){
+      previewBox.innerHTML = '';
+      const img = new Image();
+      img.src = src + (src.includes('?')?'&':'?') + 't=' + Date.now();
+      img.alt = 'overlay preview';
+      previewBox.appendChild(img);
+    }
+
+    function gatherSelectedClasses(){
+      return Array.from(classList.querySelectorAll('input[type=checkbox]:checked')).map(c=>c.value);
+    }
+
+    function enableDownloads(){
+      if(!fileId) return;
+
+      // Overlay
+      dlOverlay.style.display = 'inline-flex';
+      dlOverlay.removeAttribute('aria-disabled');
+      dlOverlay.href  = `/api/download/overlay.png?fileId=${encodeURIComponent(fileId)}`;
+      dlOverlay.setAttribute('download', `${fileId}_overlay.png`);
+    }
+
+
+    function triggerDownload(url, filename){
+      const a = document.createElement('a');
+      a.href = url;
+      if (filename) a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    }
+
+    function renderMetadata(md){
+      const metaEl = document.getElementById('meta');
+      if (metaEl) metaEl.textContent = JSON.stringify(md, null, 2);
+
+      // Show/hide GeoJSON download depending on georeference
+      if (dlGeoJSON) {
+        const show = !!md.is_geotiff;
+        dlGeoJSON.style.display = show ? 'inline-flex' : 'none';
+        if (show) {
+          dlGeoJSON.removeAttribute('aria-disabled');
+        } else {
+          dlGeoJSON.setAttribute('aria-disabled','true');
+        }
+      }
+
+  // Reveal the metadata card
+  if (metaCard) metaCard.style.display = 'block';
+}
+
+
+    // flags so we only do these once
+    let didShowMeta = false;
+    let didAutoDL   = false;
+
+    async function readModelInfo(){
+      try{
+        const res = await fetch('/api/model/info');
+        if(!res.ok) throw new Error('Model info failed');
+        const data = await res.json();
+        modelMeta.textContent = `Model: ${data.model || 'unknown'}`;
+
+        classList.innerHTML = '';
+        (data.classes||[]).forEach(cls=>{
+          const id = `cls_${cls.replace(/[^a-z0-9_-]/gi,'_')}`;
+          const el = document.createElement('label');
+          el.className = 'class-item';
+          el.innerHTML = `<input type="checkbox" value="${cls}" checked /> <span>${cls}</span>`;
+          classList.appendChild(el);
+        });
+        const has = (data.classes||[]).length>0;
+        selectAllBtn.disabled = !has; clearAllBtn.disabled = !has;
+        startBtn.disabled = !has || !fileId;
+      }catch(err){
+        console.error(err);
+        modelMeta.textContent = 'Model: (error)';
+      }
+    }
+
+    async function uploadInChunks(){
+      if(!currentFile) return;
+      cancelRequested = false;
+      setProgress(0); stageText.textContent = 'Stage: uploading';
+      uploadMeta.textContent = 'Initializing…';
+      uploadBtn.disabled = true; startBtn.disabled = true; cancelBtn.disabled = false;
+
+      // 1) init
+      const initRes = await fetch('/api/upload/init',{
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ filename: currentFile.name, size: currentFile.size })
+      });
+      if(!initRes.ok){ uploadMeta.textContent = 'Init failed'; uploadBtn.disabled=false; cancelBtn.disabled=true; return; }
+      const init = await initRes.json();
+      fileId = init.fileId; const serverChunk = init.chunkSize || (parseInt(chunkSizeMB.value,10)||5)*1024*1024;
+
+      // 2) loop chunks
+      const total = Math.ceil(currentFile.size / serverChunk);
+      for(let i=0;i<total;i++){
+        if(cancelRequested){ uploadMeta.textContent = 'Cancelled'; cancelBtn.disabled=true; return; }
+        const start = i*serverChunk; const end = Math.min((i+1)*serverChunk, currentFile.size);
+        const blob = currentFile.slice(start,end);
+        uploadMeta.textContent = `Chunk ${i+1}/${total} (${fmtBytes(end)}/${fmtBytes(currentFile.size)})`;
+        const res = await fetch('/api/upload/chunk',{
+          method:'POST', headers:{
+            'x-file-id': fileId,
+            'x-chunk-index': String(i),
+            'x-chunk-total': String(total),
+          }, body: blob
+        });
+        if(!res.ok){ uploadMeta.textContent = `Chunk ${i+1} failed`; cancelBtn.disabled=true; return; }
+        setProgress(Math.round(((i+1)/total)*100));
+      }
+
+      // 3) complete
+      const done = await fetch('/api/upload/complete', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ fileId })
+      });
+      if(!done.ok){ uploadMeta.textContent='Complete failed'; cancelBtn.disabled=true; return; }
+
+      // 1) after upload complete (inside uploadInChunks, right after `upload complete`)
+      uploadMeta.textContent = 'Upload complete';
+      statusLine.textContent = 'Upload complete. Ready to process.';
+      startBtn.disabled = false;
+      recheckBtn.disabled = false;
+
+      // NEW: fetch metadata immediately so user sees it before pressing Start
+      try{
+        const mdRes = await fetch(`/api/file/metadata?fileId=${encodeURIComponent(fileId)}`);
+        if (mdRes.ok){
+          const md = await mdRes.json();
+          renderMetadata(md);
+          didShowMeta = true;
+        }
+      }catch(e){ console.warn('metadata fetch failed', e); }
+
+    }
+    async function startProcessing(){
+      if(!fileId) return;
+      const payload = {
+        fileId,
+        classes: gatherSelectedClasses(),
+        params: {
+            tile_size: parseInt(tileSize.value,10)||1024,
+            overlap: parseInt(overlap.value,10)||256,
+            conf: parseFloat(conf.value)||0.2,
+            max_det: parseInt(maxDet.value,10)||600,   
+            iou: parseFloat(iou.value)||0.25           
+          }
+
+      };
+      stageText.textContent = 'Stage: tiling';
+      setProgress(0);
+      startBtn.disabled = true; cancelBtn.disabled = false;
+      await fetch('/api/process/start',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+
+      // begin polling
+      if(polling) clearInterval(polling);
+      polling = setInterval(checkProgress, 1000);
+    }
+
+    async function checkProgress(){
+      try{
+        if(!fileId) return;
+        const res = await fetch(`/api/process/progress?fileId=${encodeURIComponent(fileId)}`);
+        if(!res.ok) return;
+        const p = await res.json();
+
+        stageText.textContent   = `Stage: ${p.stage || '—'}`;
+        tileCounter.textContent = `Tiles: ${p.processedTiles ?? 0}/${p.totalTiles ?? '—'}`;
+        if (typeof p.percent === 'number') setProgress(p.percent);
+        statusLine.textContent  = p.message || '';
+
+        if (p.lastTilePng) setPreview(p.lastTilePng);
+          // 2) inside checkProgress() add fallback in case we missed 'uploaded' stage
+          if (!didShowMeta && p && p.metadata){
+            renderMetadata(p.metadata);
+            didShowMeta = true;
+          }
+
+        // Show metadata once, right after the upload is assembled
+        if (p.stage === 'uploaded' && !didShowMeta) {
+          didShowMeta = true;
+          try{
+            const mdRes = await fetch(`/api/file/metadata?fileId=${encodeURIComponent(fileId)}`);
+            if (mdRes.ok) {
+              const md = await mdRes.json();
+              renderMetadata(md);
+            }
+          }catch(e){ console.warn('metadata fetch failed', e); }
+        }
+
+        if (p.stage === 'done'){
+          if (polling) { clearInterval(polling); polling = null; }
+          cancelBtn.disabled = true; startBtn.disabled = true;
+          setProgress(100);
+          statusLine.textContent = 'Completed. Downloads ready.';
+
+          enableDownloads();
+          setPreview(`/api/preview/overlay.png?fileId=${encodeURIComponent(fileId)}`);
+
+          // reveal clear buttons
+          btnClearCurrent.style.display = 'inline-flex';
+          btnClearAll.style.display = 'inline-flex';
+
+          // optional auto-downloads you already wired…
+          if (!didAutoDL) {
+            didAutoDL = true;
+            if (p.overlayUrl) triggerDownload(p.overlayUrl, `${fileId}_overlay.png`);
+            if (p.geojsonUrl) triggerDownload(p.geojsonUrl, `${fileId}.geojson`);
+          }
+        
+          // Show Complete & Clear
+          if (completeBtn) {
+            completeBtn.style.display = 'inline-flex';
+            completeBtn.onclick = async () => {
+              try {
+                await fetch(`/api/jobs/clear?fileId=${encodeURIComponent(fileId)}`, { method:'POST' });
+                completeBtn.disabled = true;
+                statusLine.textContent = 'Job files cleared.';
+              } catch {}
+            };
+          }
+        }
+
+
+        if (p.stage === 'error'){
+          if (polling) { clearInterval(polling); polling = null; }
+          cancelBtn.disabled = true; startBtn.disabled = false;
+          statusLine.textContent = 'Error: ' + (p.message || 'unknown');
+        }
+      }catch(err){
+        console.error(err);
+      }
+    }
+
+    async function cancel(){
+      cancelRequested = true;
+      try{ await fetch(`/api/process/cancel?fileId=${encodeURIComponent(fileId)}`,{method:'POST'}); }catch(e){}
+      if(polling){ clearInterval(polling); polling=null; }
+      setProgress(0); stageText.textContent='Stage: —'; tileCounter.textContent='Tiles: —';
+      cancelBtn.disabled = true; startBtn.disabled = !fileId; statusLine.textContent = 'Cancelled.';
+    }
+
+    // ------- Wire-up -------
+    fileInput.addEventListener('change',()=>{
+      currentFile = fileInput.files[0];
+      if(!currentFile){ fileMeta.textContent='No file selected'; uploadBtn.disabled=true; return; }
+      fileMeta.textContent = `${currentFile.name} • ${fmtBytes(currentFile.size)}`;
+      uploadBtn.disabled = false; startBtn.disabled = true; recheckBtn.disabled = true; setProgress(0);
+      statusLine.textContent = 'File selected. Upload to continue.';
+    });
+
+
+    fileInput.addEventListener('change', ()=>{
+      // ...your existing code...
+      btnClearCurrent.style.display = 'none';
+      btnClearAll.style.display = 'none';
+      disableDownloadsUI();
+    });
+
+
+    uploadBtn.addEventListener('click', uploadInChunks);
+    startBtn.addEventListener('click', startProcessing);
+    cancelBtn.addEventListener('click', cancel);
+    recheckBtn.addEventListener('click', readModelInfo);
+
+    selectAllBtn.addEventListener('click',()=>{
+      classList.querySelectorAll('input[type=checkbox]').forEach(cb=>cb.checked=true);
+    });
+    clearAllBtn.addEventListener('click',()=>{
+      classList.querySelectorAll('input[type=checkbox]').forEach(cb=>cb.checked=false);
+    });
+
+    btnClearCurrent.addEventListener('click', async () => {
+      // stop any polling and server work first (best-effort)
+      try { if (fileId) await fetch(`/api/process/cancel?fileId=${encodeURIComponent(fileId)}`, {method:'POST'}); } catch {}
+      try {
+        const res = await fetch('/api/jobs/clear_current', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ fileId })
+        });
+        if (res.ok) {
+          resetUIAfterClear('Cleared current job.');
+        } else {
+          statusLine.textContent = 'Error clearing current job.';
+        }
+      } catch (e) {
+        console.error(e);
+        statusLine.textContent = 'Error clearing current job.';
+      }
+    });
+
+    btnClearAll.addEventListener('click', async () => {
+      // also cancel current job if any
+      try { if (fileId) await fetch(`/api/process/cancel?fileId=${encodeURIComponent(fileId)}`, {method:'POST'}); } catch {}
+      try {
+        const res = await fetch('/api/jobs/clear_all', { method: 'POST' });
+        if (res.ok) {
+          resetUIAfterClear('All history cleared.');
+        } else {
+          statusLine.textContent = 'Error clearing history.';
+        }
+      } catch (e) {
+        console.error(e);
+        statusLine.textContent = 'Error clearing history.';
+      }
+    });
+
+
+
+    // Get model info on load (optional; also enabled after upload)
+    readModelInfo();
+  </script>
+</body>
+</html>
