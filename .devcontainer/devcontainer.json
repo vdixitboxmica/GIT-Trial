@@ -1,12 +1,7 @@
 {
-  "name": "Car Detection (Ubuntu)",
-  "image": "mcr.microsoft.com/devcontainers/python:3.11",
-
-  "features": {
-    "ghcr.io/devcontainers/features/git-lfs:1": {},
-    "ghcr.io/devcontainers/features/apt-packages:1": {
-      "packages": "build-essential pkg-config libgl1 libglib2.0-0 ffmpeg"
-    }
+  "name": "Car Detection (Ubuntu, baked deps)",
+  "build": {
+    "dockerfile": "Dockerfile"
   },
 
   "postCreateCommand": "/bin/bash -lc 'chmod +x .devcontainer/postCreate.sh .devcontainer/postStart.sh && .devcontainer/postCreate.sh'",
@@ -22,5 +17,6 @@
     }
   },
 
-  "forwardPorts": [8000, 8080]
+  "forwardPorts": [8000, 8080],
+  "remoteUser": "vscode"
 }
